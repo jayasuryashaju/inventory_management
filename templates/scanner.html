@@ -1,0 +1,255 @@
+{% load static %}
+
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Barcode Scanner App</title>
+
+    <!-- Include jQuery -->
+    <script src="https://code.jquery.com/jquery-3.6.4.min.js"></script>
+
+    <!-- Include your custom JavaScript file -->
+
+    <!-- ZXing Library -->
+    <script type="text/javascript" src="https://unpkg.com/@zxing/library@0.20.0/umd/index.min.js"></script>
+
+    <!-- Bootstrap -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/js/bootstrap.bundle.min.js"></script>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/css/bootstrap.min.css" rel="stylesheet">
+
+    <!-- Custom CSS -->
+    <style>
+        body {
+            font-family: 'Arial', sans-serif;
+            background-color: #f8f9fa;
+        }
+
+        .container {
+            margin-top: 50px;
+        }
+
+        .col-md-6 {
+            margin-bottom: 20px;
+        }
+
+        #preview {
+            width: 100%;
+            max-width: 500px;
+            height: auto;
+            margin: 0 auto;
+            display: block;
+            border: 1px solid #ced4da;
+            background-color: #fff;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+            border-radius: 8px;
+        }
+
+        #excel-table {
+            margin-top: 20px;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="container">
+        <div>
+            <br>
+            <button id="downloadPdf" class="btn btn-secondary btn-download">Download PDF</button>
+        </div>
+        <div class="row">
+            <div class="col-md-6">
+                <h2 class="text-center mb-4">Excel Upload</h2>
+                <form id="excel-upload-form" method="post" enctype="multipart/form-data"
+                    action="{% url 'upload_excel' %}">
+                    {% csrf_token %}
+                    <div class="mb-3">
+                        <input type="file" class="form-control" name="excel_file" accept=".xlsx" required>
+                    </div>
+                    <button type="submit" class="btn btn-primary btn-upload">Upload Excel</button>
+                </form>
+            </div>
+            <div class="col-md-6">
+                <h2 class="text-center mb-4">Barcode Scanner</h2>
+                <video id="preview"></video>
+            </div>
+        </div>
+
+        <!-- Display the scanned data in a table -->
+        <div id="excel-display" class="table-responsive"></div>
+    </div>
+
+    <!-- ... (your previous HTML code) ... -->
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            const codeReader = new ZXing.BrowserMultiFormatReader();
+
+            // Retrieve Excel data from localStorage on page load
+            const storedExcelData = localStorage.getItem('excelData');
+            if (storedExcelData) {
+                displayExcelData(storedExcelData);
+                $("#downloadExcel").prop("disabled", false);
+            }
+
+            codeReader.getVideoInputDevices()
+                .then(videoInputDevices => {
+                    const selectedDeviceId = videoInputDevices[0].deviceId;
+                    activateScanner(selectedDeviceId);
+                })
+                .catch(err => console.error(err));
+
+            function activateScanner(deviceId) {
+                codeReader.decodeFromVideoDevice(deviceId, 'preview', (result, err) => {
+                    if (result) {
+                        console.log('Scanned result:', result.text);
+
+                        // Add logic to check if the scanned barcode exists in the uploaded Excel file
+                        // If yes, call the Django views function to update the data
+                        checkScannedBarcode(result.text);
+                    }
+                    if (err && !(err instanceof ZXing.NotFoundException)) {
+                        console.error(err);
+                    }
+                });
+            }
+
+            // Excel upload form submission using AJAX
+            $('#excel-upload-form').submit(function (e) {
+                e.preventDefault();
+
+                // Use FormData to handle file uploads
+                const formData = new FormData(this);
+
+                // Use AJAX to submit the form data to the server
+                $.ajax({
+                    url: $(this).attr('action'),
+                    type: $(this).attr('method'),
+                    data: formData,
+                    processData: false,
+                    contentType: false,
+                    success: function (data) {
+                        console.log('Excel Upload Form Submitted successfully');
+
+                        // Display Excel data on the page
+                        displayExcelData(data.excel_data);
+
+                        // Display success message on the page
+                        $('#result').html('<div class="alert alert-success" role="alert">Excel Uploaded Successfully!</div>');
+
+                        // Enable the download button
+                        $("#downloadExcel").prop("disabled", false);
+
+                        // Store the Excel data in localStorage
+                        localStorage.setItem('excelData', data.excel_data);
+                    },
+                    error: function (error) {
+                        console.error('Error submitting Excel Upload Form:', error);
+
+                        // Display error message on the page
+                        $('#result').html('<div class="alert alert-danger" role="alert">Error uploading Excel. Please try again.</div>');
+                    }
+                });
+            });
+
+            // Function to display Excel data on the page
+            function displayExcelData(excelData) {
+                // Assuming you have an element with the ID 'excel-display'
+                $('#excel-display').html('<pre>' + JSON.stringify(JSON.parse(excelData), null, 2) + '</pre>');
+            }
+
+            // Function to check if the scanned barcode exists in the uploaded Excel data
+            function checkScannedBarcode(scannedBarcode) {
+                // Get the Excel data from the displayed element
+                const excelData = JSON.parse($('#excel-display pre').text());
+                console.log(excelData);
+
+                // Send an AJAX request to the Django server to check the barcode
+                $.ajax({
+                    type: 'POST',
+                    url: '/check_barcode/',
+                    data: {
+                        scanned_barcode: scannedBarcode,
+                        excel_data: JSON.stringify(excelData),
+                        csrfmiddlewaretoken: $('input[name=csrfmiddlewaretoken]').val(),
+                    },
+                    success: function (response) {
+                        if (response && response.success) {
+                            // Update the displayed Excel data
+                            displayExcelData(JSON.stringify(response.excel_data));
+
+                            // Perform any client-side action on success
+                            console.log('Matching row found:', response.excel_data);
+
+                            // Display a success alert
+                            alert('Match found! Data updated.');
+
+                            // Update localStorage with the modified Excel data
+                            localStorage.setItem('excelData', JSON.stringify(response.excel_data));
+                        } else {
+                            console.log('Barcode not found in Excel data.');
+
+                            // Display a failure alert
+                            alert('Match not found. Data not updated.');
+                        }
+                    },
+                    error: function (error) {
+                        console.error('Error checking barcode:', error);
+                    }
+                });
+            }
+
+            // // Handle button click for Excel download
+            // $("#downloadExcel").on("click", function () {
+            //     // Send the modified Excel data back to the server for download
+            //     $.ajax({
+            //         type: "POST",
+            //         url: "/download_excel/",
+            //         data: { 'excel_data': $("#excel-display").text() },
+            //         success: function (response) {
+            //             // Create a Blob from the response and initiate the download
+            //             var blob = new Blob([response], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+            //             var link = document.createElement('a');
+            //             link.href = window.URL.createObjectURL(blob);
+            //             link.download = 'modified_excel.xlsx';
+            //             document.body.appendChild(link);
+            //             link.click();
+            //             document.body.removeChild(link);
+            //         },
+            //         error: function (error) {
+            //             console.log("Error downloading Excel file:", error);
+            //         }
+            //     });
+            // });
+
+            $("#downloadPdf").on("click", function () {
+                // Send the JSON data to the server for PDF download
+                $.ajax({
+                    type: "POST",
+                    url: "/download_pdf/",
+                    data: { 'excel_data': $("#excel-display pre").text() },
+                    success: function (response) {
+                        // Create a Blob from the response and initiate the download
+                        var blob = new Blob([response], { type: 'application/pdf' });
+                        var link = document.createElement('a');
+                        link.href = window.URL.createObjectURL(blob);
+                        link.download = 'excel_data.pdf';
+                        document.body.appendChild(link);
+                        link.click();
+                        document.body.removeChild(link);
+                    },
+                    error: function (error) {
+                        console.log("Error downloading PDF file:", error);
+                    }
+                });
+            });
+        });
+    </script>
+
+
+</body>
+
+</html>
